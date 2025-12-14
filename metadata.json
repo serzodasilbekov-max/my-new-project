@@ -1,0 +1,5 @@
+{
+  "name": "Puter.js Explorer",
+  "description": "A feature-rich starter application demonstrating the capabilities of Puter.js including AI, Cloud Storage, Key-Value Store, and Authentication.",
+  "requestFramePermissions": []
+}
