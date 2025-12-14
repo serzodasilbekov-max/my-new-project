@@ -1,5 +1,7 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2 } from 'lucide-react';
+import { Send, Bot, User, Loader2, Wrench, Globe, Image as ImageIcon, Video as VideoIcon, Music, ExternalLink, X } from 'lucide-react';
+import { AGENT_TOOLS, AGENT_HANDLERS, AgentArtifact } from '../utils/agentTools';
 
 const MODEL_LIST = [
   "abuse",
@@ -505,9 +507,103 @@ const groupedModels = MODEL_LIST.reduce((acc, model) => {
 const groupOrder = ['Standard', 'OpenRouter', 'TogetherAI'];
 
 interface Message {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
+  tool_calls?: any[];
+  tool_call_id?: string;
+  name?: string;
+  artifact?: AgentArtifact;
 }
+
+// Helper to extract string content safely
+const extractTextFromContent = (content: any): string => {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((c: any) => c.text || '').join('');
+  }
+  if (typeof content === 'object' && content !== null) {
+    return content.text || '';
+  }
+  return '';
+};
+
+// Internal Modal Component for Previews
+const PreviewModal: React.FC<{ artifact: AgentArtifact; onClose: () => void }> = ({ artifact, onClose }) => {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="flex items-center justify-between p-4 border-b border-slate-200 bg-slate-50">
+          <div className="flex items-center gap-2">
+            {artifact.type === 'image' && <ImageIcon size={20} className="text-blue-500" />}
+            {artifact.type === 'video' && <VideoIcon size={20} className="text-blue-500" />}
+            {artifact.type === 'audio' && <Music size={20} className="text-blue-500" />}
+            {artifact.type === 'website' && <Globe size={20} className="text-blue-500" />}
+            <h3 className="font-semibold text-slate-800">{artifact.title}</h3>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+        
+        <div className="flex-1 overflow-auto bg-slate-100 flex items-center justify-center p-4 relative min-h-[400px]">
+          {artifact.type === 'image' && (
+            <img src={artifact.url} alt={artifact.title} className="max-w-full max-h-full object-contain rounded-lg shadow-lg" />
+          )}
+          
+          {artifact.type === 'video' && (
+            <video src={artifact.url} controls autoPlay className="max-w-full max-h-full rounded-lg shadow-lg" />
+          )}
+          
+          {artifact.type === 'audio' && (
+            <div className="w-full max-w-md bg-white p-8 rounded-xl shadow-lg flex flex-col items-center gap-4">
+               <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                 <Music size={40} />
+               </div>
+               <audio src={artifact.url} controls className="w-full" />
+            </div>
+          )}
+          
+          {artifact.type === 'website' && (
+            <iframe src={artifact.url} className="w-full h-full min-h-[600px] border-0 bg-white rounded-lg shadow-inner" />
+          )}
+        </div>
+
+        <div className="p-4 border-t border-slate-200 bg-white flex justify-between items-center">
+            <p className="text-sm text-slate-500 truncate max-w-xl">{artifact.description || artifact.url}</p>
+            <a href={artifact.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+                Open in new tab <ExternalLink size={14} />
+            </a>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ArtifactCard: React.FC<{ artifact: AgentArtifact; onPreview: (a: AgentArtifact) => void }> = ({ artifact, onPreview }) => {
+    let Icon = Globe;
+    if (artifact.type === 'image') Icon = ImageIcon;
+    if (artifact.type === 'video') Icon = VideoIcon;
+    if (artifact.type === 'audio') Icon = Music;
+
+    return (
+        <div className="mt-2 w-full max-w-sm bg-slate-800 text-white rounded-xl overflow-hidden shadow-lg border border-slate-700">
+            <div className="p-4 border-b border-slate-700 flex items-center gap-2">
+                <Icon size={18} className="text-blue-400" />
+                <span className="font-semibold text-sm truncate">{artifact.title}</span>
+            </div>
+            <div className="p-4 bg-slate-800/50">
+                <p className="text-slate-400 text-xs mb-4 line-clamp-2">{artifact.description}</p>
+                <button 
+                    onClick={() => onPreview(artifact)}
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                    <ExternalLink size={14} />
+                    Open Preview
+                </button>
+            </div>
+        </div>
+    );
+};
 
 const AIChat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
@@ -515,7 +611,10 @@ const AIChat: React.FC = () => {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState(''); // "Thinking...", "Running tool..."
   const [model, setModel] = useState('gpt-4o-mini'); // Default model
+  const [isAgentMode, setIsAgentMode] = useState(false);
+  const [previewArtifact, setPreviewArtifact] = useState<AgentArtifact | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -524,7 +623,7 @@ const AIChat: React.FC = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, currentStatus]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -533,115 +632,217 @@ const AIChat: React.FC = () => {
     const userMessage = input.trim();
     setInput('');
     
-    // Create new history including the user message
     const newMessage: Message = { role: 'user', content: userMessage };
     const updatedMessages = [...messages, newMessage];
-    
     setMessages(updatedMessages);
     setIsLoading(true);
+    setCurrentStatus("Thinking...");
 
     try {
-      // Pass full history to puter.ai.chat for context
-      const response = await puter.ai.chat(updatedMessages, { stream: true, model: model });
-      
-      let fullResponse = '';
-      // Add placeholder for assistant response
-      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+      if (isAgentMode) {
+        // --- AGENT MODE ---
+        const agentMessages = [
+           { role: 'system', content: 'You are an OS Assistant with full access to the Puter.js OS. Write files, deploy websites, generating media. When you use tools like site_deploy or generate_image, the system will automatically show an Artifact card to the user.' },
+           ...updatedMessages
+        ];
 
-      for await (const part of response) {
-        // Robust check for text content: handle object with text property or raw string
-        const text = part?.text ?? (typeof part === 'string' ? part : '');
-        
-        if (text) {
-          fullResponse += text;
-          setMessages(prev => {
-            const newMsgs = [...prev];
-            const lastMsg = newMsgs[newMsgs.length - 1];
-            if (lastMsg.role === 'assistant') {
-              lastMsg.content = fullResponse;
+        let loopCount = 0;
+        const MAX_LOOPS = 10;
+        let currentLoopMessages = [...agentMessages];
+
+        while (loopCount < MAX_LOOPS) {
+            const response = await puter.ai.chat(currentLoopMessages, { 
+                model: model,
+                tools: AGENT_TOOLS
+            });
+
+            const msg = response.message || response;
+            currentLoopMessages.push(msg); // Add assistant's thought/call to context
+
+            // If there are tool calls
+            if (msg.tool_calls && msg.tool_calls.length > 0) {
+                // Execute tools
+                for (const tool of msg.tool_calls) {
+                    const fnName = tool.function.name;
+                    setCurrentStatus(`Executing ${fnName}...`); // Update status UI
+                    
+                    const argsString = tool.function.arguments;
+                    let args = {};
+                    try {
+                        args = typeof argsString === 'string' ? JSON.parse(argsString) : argsString;
+                    } catch (e) { console.error("Parse error", e); }
+
+                    const handler = AGENT_HANDLERS[fnName];
+                    let result: any = "Error: Tool not found.";
+                    
+                    if (handler) {
+                        try {
+                            result = await handler(args);
+                        } catch (err: any) {
+                            result = `Error: ${err.message}`;
+                        }
+                    }
+
+                    // Handle Artifacts
+                    let toolContentForLLM = String(result);
+                    let artifact: AgentArtifact | undefined;
+
+                    if (result && typeof result === 'object' && result.isArtifact) {
+                        artifact = result;
+                        toolContentForLLM = `Artifact created: ${result.type} - ${result.title} at ${result.url}`;
+                        
+                        // Add the artifact to the UI stream immediately
+                        setMessages(prev => [...prev, {
+                            role: 'assistant',
+                            content: '', // No text content, just the artifact
+                            artifact: artifact
+                        }]);
+                    }
+
+                    // Feed result back to LLM
+                    currentLoopMessages.push({
+                        role: 'tool',
+                        tool_call_id: tool.id,
+                        name: fnName,
+                        content: toolContentForLLM
+                    });
+                }
+                loopCount++;
+            } else {
+                // Final response (text)
+                const finalText = extractTextFromContent(msg.content);
+                setMessages(prev => [...prev, { role: 'assistant', content: finalText }]);
+                break;
             }
-            return newMsgs;
-          });
+        }
+
+      } else {
+        // --- STANDARD CHAT MODE ---
+        setCurrentStatus("Thinking...");
+        const response = await puter.ai.chat(updatedMessages, { stream: true, model: model });
+        
+        let fullResponse = '';
+        setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+        setCurrentStatus(""); // Clear status once streaming starts
+
+        for await (const part of response) {
+          const text = part?.text ?? (typeof part === 'string' ? part : '');
+          if (text) {
+            fullResponse += text;
+            setMessages(prev => {
+              const newMsgs = [...prev];
+              const lastMsg = newMsgs[newMsgs.length - 1];
+              if (lastMsg.role === 'assistant') {
+                lastMsg.content = fullResponse;
+              }
+              return newMsgs;
+            });
+          }
         }
       }
-    } catch (error) {
+
+    } catch (error: any) {
       console.error('AI Error:', error);
-      setMessages(prev => {
-          // If we added an empty assistant message, update it. Otherwise add one.
-          const lastMsg = prev[prev.length - 1];
-          if (lastMsg.role === 'assistant' && lastMsg.content === '') {
-              const newMsgs = [...prev];
-              newMsgs[newMsgs.length - 1].content = 'Sorry, I encountered an error connecting to the AI service. Please try a different model.';
-              return newMsgs;
-          }
-          return [...prev, { role: 'assistant', content: 'Sorry, I encountered an error connecting to the AI service. Please try a different model.' }];
-      });
+      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${error.message || 'Failed to connect'}.` }]);
     } finally {
       setIsLoading(false);
+      setCurrentStatus("");
     }
   };
 
   return (
-    <div className="h-full flex flex-col bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden m-4">
-      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+    <div className="h-full flex flex-col bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden m-4 relative">
+      {/* Header */}
+      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 flex-wrap gap-2">
         <h3 className="font-semibold text-slate-800 flex items-center gap-2">
           <Bot size={20} className="text-blue-500" />
           AI Assistant
         </h3>
-        <select 
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[200px]"
-        >
-          {groupOrder.map(group => (
-            <optgroup label={group} key={group}>
-              {groupedModels[group]?.map(m => {
-                const displayName = group === 'OpenRouter' ? m.replace('openrouter:', '') : 
-                                    group === 'TogetherAI' ? m.replace('togetherai:', '') : m;
-                return (
-                  <option key={m} value={m}>{displayName}</option>
-                );
-              })}
-            </optgroup>
-          ))}
-        </select>
+        
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-600">Agent Mode</span>
+            <button 
+                onClick={() => setIsAgentMode(!isAgentMode)}
+                className={`w-10 h-5 rounded-full relative transition-colors ${isAgentMode ? 'bg-blue-600' : 'bg-slate-300'}`}
+                title="Enable access to OS tools (Files, Apps, etc.)"
+            >
+                <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isAgentMode ? 'left-6' : 'left-1'}`} />
+            </button>
+            {isAgentMode && <Wrench size={14} className="text-blue-600" />}
+          </div>
+
+          <select 
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[200px]"
+          >
+            {groupOrder.map(group => (
+                <optgroup label={group} key={group}>
+                {groupedModels[group]?.map(m => {
+                    const displayName = group === 'OpenRouter' ? m.replace('openrouter:', '') : 
+                                        group === 'TogetherAI' ? m.replace('togetherai:', '') : m;
+                    return (
+                    <option key={m} value={m}>{displayName}</option>
+                    );
+                })}
+                </optgroup>
+            ))}
+          </select>
+        </div>
       </div>
 
+      {/* Chat Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
-        {messages.map((msg, idx) => (
-          <div
-            key={idx}
-            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
-                msg.role === 'user'
-                  ? 'bg-blue-600 text-white rounded-br-none'
-                  : 'bg-white text-slate-700 border border-slate-200 rounded-bl-none'
-              }`}
-            >
-              <div className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</div>
-            </div>
-          </div>
-        ))}
-        {isLoading && messages[messages.length - 1]?.role === 'user' && (
-           <div className="flex justify-start">
-             <div className="bg-white text-slate-700 border border-slate-200 rounded-2xl rounded-bl-none px-4 py-3 shadow-sm flex items-center gap-2">
-                <Loader2 size={16} className="animate-spin text-slate-400" />
-                <span className="text-xs text-slate-400">Thinking...</span>
+        {messages.map((msg, idx) => {
+            // Skip tool messages in UI
+            if (msg.role === 'tool' || msg.role === 'system') return null;
+            // Also skip if it is an empty assistant message (placeholder) unless it has an artifact
+            if (msg.role === 'assistant' && !msg.content && !msg.artifact) return null;
+
+            return (
+                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] ${msg.role === 'user' ? 'ml-auto' : ''}`}>
+                        {/* Text Bubble */}
+                        {msg.content && (
+                            <div className={`rounded-2xl px-4 py-3 shadow-sm ${
+                                msg.role === 'user'
+                                ? 'bg-blue-600 text-white rounded-br-none'
+                                : 'bg-white text-slate-700 border border-slate-200 rounded-bl-none'
+                            }`}>
+                                <div className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</div>
+                            </div>
+                        )}
+                        
+                        {/* Artifact Card */}
+                        {msg.artifact && (
+                            <ArtifactCard artifact={msg.artifact} onPreview={setPreviewArtifact} />
+                        )}
+                    </div>
+                </div>
+            );
+        })}
+
+        {/* Status Indicator */}
+        {(isLoading && currentStatus) && (
+           <div className="flex justify-start animate-in fade-in slide-in-from-bottom-2">
+             <div className="bg-transparent px-2 py-1 flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin text-slate-400" />
+                <span className="text-xs font-mono text-slate-400">{currentStatus}</span>
              </div>
            </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Input Area */}
       <form onSubmit={handleSubmit} className="p-4 bg-white border-t border-slate-100">
         <div className="flex gap-2">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your message..."
+            placeholder={isAgentMode ? "Ask me to create a website, generate an image, or manage files..." : "Type your message..."}
             className="flex-1 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             disabled={isLoading}
           />
@@ -654,6 +855,9 @@ const AIChat: React.FC = () => {
           </button>
         </div>
       </form>
+      
+      {/* Modal Rendered at the end of the container */}
+      {previewArtifact && <PreviewModal artifact={previewArtifact} onClose={() => setPreviewArtifact(null)} />}
     </div>
   );
 };

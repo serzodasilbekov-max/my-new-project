@@ -19,6 +19,8 @@ declare global {
       read: (path: string) => Promise<Blob>;
       delete: (path: string) => Promise<void>;
       mkdir: (path: string) => Promise<any>;
+      move: (source: string, destination: string) => Promise<any>;
+      copy: (source: string, destination: string) => Promise<any>;
     };
     kv: {
       set: (key: string, value: any) => Promise<boolean>;
