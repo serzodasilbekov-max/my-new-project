@@ -651,13 +651,23 @@ const AIChat: React.FC = () => {
         let currentLoopMessages = [...agentMessages];
 
         while (loopCount < MAX_LOOPS) {
+            // Adjusted call to match standard signature: (messages, options)
             const response = await puter.ai.chat(currentLoopMessages, { 
                 model: model,
                 tools: AGENT_TOOLS
             });
 
             const msg = response.message || response;
-            currentLoopMessages.push(msg); // Add assistant's thought/call to context
+            
+            // Construct a clean message object for history
+            const assistantMessage = {
+                role: msg.role || 'assistant',
+                content: msg.content,
+                tool_calls: msg.tool_calls,
+                ...(msg.name ? { name: msg.name } : {})
+            };
+            
+            currentLoopMessages.push(assistantMessage); // Add assistant's thought/call to context
 
             // If there are tool calls
             if (msg.tool_calls && msg.tool_calls.length > 0) {
@@ -719,6 +729,7 @@ const AIChat: React.FC = () => {
       } else {
         // --- STANDARD CHAT MODE ---
         setCurrentStatus("Thinking...");
+        // Adjusted call to match standard signature: (messages, options)
         const response = await puter.ai.chat(updatedMessages, { stream: true, model: model });
         
         let fullResponse = '';
