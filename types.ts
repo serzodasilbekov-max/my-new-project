@@ -1,5 +1,13 @@
 // Simple type declaration for the global puter object to avoid TS errors
 declare global {
+  interface AIStudio {
+    hasSelectedApiKey: () => Promise<boolean>;
+    openSelectKey: () => Promise<void>;
+  }
+
+  interface Window {
+    aistudio?: AIStudio;
+  }
   const puter: {
     auth: {
       signIn: () => Promise<any>;

@@ -1,3 +1,4 @@
+
 // Combined library of tools for Puter.js AI Agent
 
 export interface AgentArtifact {
@@ -371,27 +372,45 @@ const utilTools = [
 
 const utilHandlers = {
     web_fetch: async ({ url }: any) => {
+        const fetchUrl = async (targetUrl: string) => {
+            const res = await fetch(targetUrl);
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+            return await res.text();
+        };
+
         try {
+            // 1. Try Puter's native fetch (if available) - this handles CORS best if supported
             // @ts-ignore
-            if (puter.net && puter.net.fetch) {
-                // @ts-ignore
-                const res = await puter.net.fetch(url);
-                if (!res.ok) {
-                    return `Error: ${res.status} ${res.statusText}`;
+            if (typeof puter.net !== 'undefined' && puter.net.fetch) {
+                try {
+                    // @ts-ignore
+                    const res = await puter.net.fetch(url);
+                    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                    const text = await res.text();
+                    return truncateText(text);
+                } catch (e) {
+                     console.warn("Puter fetch failed, trying fallback...", e);
                 }
-                const text = await res.text();
-                if (!text) return "Empty response.";
-                
-                // Truncate to avoid context limit issues which can cause AI provider errors
-                const maxLength = 2500;
-                return text.length > maxLength 
-                    ? text.slice(0, maxLength) + `\n...(truncated ${text.length - maxLength} chars)` 
-                    : text;
-            } else {
-                 // Fallback if puter.net is not available (may fail due to CORS)
-                 const res = await fetch(url);
-                 const text = await res.text();
-                 return text.slice(0, 2500);
+            }
+
+            // 2. Try direct fetch (works for some APIs and same-origin)
+            try {
+                const text = await fetchUrl(url);
+                return truncateText(text);
+            } catch (err) {
+                // 3. Fallback to CORS proxy (corsproxy.io)
+                console.warn("Direct fetch failed, trying corsproxy.io...", err);
+                try {
+                    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+                    const text = await fetchUrl(proxyUrl);
+                    return truncateText(text);
+                } catch (err2) {
+                     // 4. Fallback to AllOrigins (slower but reliable)
+                     console.warn("corsproxy.io failed, trying allorigins...", err2);
+                     const proxyUrl2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+                     const text = await fetchUrl(proxyUrl2);
+                     return truncateText(text);
+                }
             }
         } catch (e: any) {
             return `Error fetching URL: ${e.message}`;
@@ -429,6 +448,13 @@ const utilHandlers = {
         return `User picked color: ${color}`;
     }
 };
+
+function truncateText(text: string, maxLength: number = 2500): string {
+    if (!text) return "Empty response.";
+    return text.length > maxLength 
+        ? text.slice(0, maxLength) + `\n...(truncated ${text.length - maxLength} chars)` 
+        : text;
+}
 
 // --- 5. AI Generation & Perception Tools ---
 const aiTools = [
@@ -506,7 +532,8 @@ const aiTools = [
 
 const aiHandlers = {
     generate_image: async ({ prompt }: any) => {
-        const image = await puter.ai.txt2img(prompt);
+        // Use gemini-3-pro-image-preview as default for tools
+        const image = await puter.ai.txt2img(prompt, { model: 'gemini-3-pro-image-preview' });
         return {
             isArtifact: true,
             type: 'image',
@@ -516,7 +543,8 @@ const aiHandlers = {
         } as AgentArtifact;
     },
     text_to_speech: async ({ text }: any) => {
-        const audio = await puter.ai.txt2speech(text);
+        // Use gpt-4o-audio-preview as default for tools
+        const audio = await puter.ai.txt2speech(text, { model: 'gpt-4o-audio-preview' });
         return {
             isArtifact: true,
             type: 'audio',

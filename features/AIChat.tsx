@@ -612,7 +612,7 @@ const AIChat: React.FC = () => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [currentStatus, setCurrentStatus] = useState(''); // "Thinking...", "Running tool..."
-  const [model, setModel] = useState('gpt-4o-mini'); // Default model
+  const [model, setModel] = useState('gpt-4.1'); // Default model set to gpt-4.1
   const [isAgentMode, setIsAgentMode] = useState(false);
   const [previewArtifact, setPreviewArtifact] = useState<AgentArtifact | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -639,11 +639,26 @@ const AIChat: React.FC = () => {
     setCurrentStatus("Thinking...");
 
     try {
+      // Clean history to be LLM-safe
+      const cleanHistory = updatedMessages
+        .filter(m => {
+          // If it's an assistant message with empty content and no tool calls (likely a UI artifact placeholder), skip it
+          if (m.role === 'assistant' && !m.content && (!m.tool_calls || m.tool_calls.length === 0)) {
+            return false;
+          }
+          return true;
+        })
+        .map(m => {
+            // Remove 'artifact' property which is internal to UI
+            const { artifact, ...rest } = m;
+            return rest;
+        });
+
       if (isAgentMode) {
         // --- AGENT MODE ---
         const agentMessages = [
            { role: 'system', content: 'You are an OS Assistant with full access to the Puter.js OS. Write files, deploy websites, generating media. When you use tools like site_deploy or generate_image, the system will automatically show an Artifact card to the user.' },
-           ...updatedMessages
+           ...cleanHistory
         ];
 
         let loopCount = 0;
@@ -651,7 +666,7 @@ const AIChat: React.FC = () => {
         let currentLoopMessages = [...agentMessages];
 
         while (loopCount < MAX_LOOPS) {
-            // Adjusted call to match standard signature: (messages, options)
+            // Standard call: (messages, options)
             const response = await puter.ai.chat(currentLoopMessages, { 
                 model: model,
                 tools: AGENT_TOOLS
@@ -667,14 +682,13 @@ const AIChat: React.FC = () => {
                 ...(msg.name ? { name: msg.name } : {})
             };
             
-            currentLoopMessages.push(assistantMessage); // Add assistant's thought/call to context
+            currentLoopMessages.push(assistantMessage); 
 
             // If there are tool calls
             if (msg.tool_calls && msg.tool_calls.length > 0) {
-                // Execute tools
                 for (const tool of msg.tool_calls) {
                     const fnName = tool.function.name;
-                    setCurrentStatus(`Executing ${fnName}...`); // Update status UI
+                    setCurrentStatus(`Executing ${fnName}...`); 
                     
                     const argsString = tool.function.arguments;
                     let args = {};
@@ -701,10 +715,9 @@ const AIChat: React.FC = () => {
                         artifact = result;
                         toolContentForLLM = `Artifact created: ${result.type} - ${result.title} at ${result.url}`;
                         
-                        // Add the artifact to the UI stream immediately
                         setMessages(prev => [...prev, {
                             role: 'assistant',
-                            content: '', // No text content, just the artifact
+                            content: '', // UI representation
                             artifact: artifact
                         }]);
                     }
@@ -729,12 +742,12 @@ const AIChat: React.FC = () => {
       } else {
         // --- STANDARD CHAT MODE ---
         setCurrentStatus("Thinking...");
-        // Adjusted call to match standard signature: (messages, options)
-        const response = await puter.ai.chat(updatedMessages, { stream: true, model: model });
+        // Use cleaned messages
+        const response = await puter.ai.chat(cleanHistory, { stream: true, model: model });
         
         let fullResponse = '';
         setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-        setCurrentStatus(""); // Clear status once streaming starts
+        setCurrentStatus(""); 
 
         for await (const part of response) {
           const text = part?.text ?? (typeof part === 'string' ? part : '');

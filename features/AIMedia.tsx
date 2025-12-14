@@ -1,14 +1,15 @@
+
 import React, { useState, useRef } from 'react';
 import { Image, Video, Volume2, Loader2, Sparkles, Music, Film } from 'lucide-react';
 
 type MediaType = 'image' | 'video' | 'audio';
 
 const IMAGE_MODELS = [
+  { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', provider: 'Google' },
+  { id: 'gemini-2.5-flash-image-preview', name: 'Gemini 2.5 Flash Image', provider: 'Google' },
   { id: 'gpt-image-1-mini', name: 'GPT Image 1 Mini', provider: 'OpenAI' },
   { id: 'gpt-image-1', name: 'GPT Image 1', provider: 'OpenAI' },
   { id: 'dall-e-3', name: 'DALL-E 3', provider: 'OpenAI' },
-  { id: 'gemini-2.5-flash-image-preview', name: 'Gemini 2.5 Flash Image', provider: 'Google' },
-  { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', provider: 'Google' },
 ];
 
 const VIDEO_MODELS = [
@@ -17,6 +18,7 @@ const VIDEO_MODELS = [
 ];
 
 const AUDIO_MODELS = [
+  { id: 'gpt-4o-audio-preview', name: 'GPT-4o Audio', provider: 'OpenAI' },
   { id: 'gpt-4o-mini-tts', name: 'GPT-4o Mini TTS', provider: 'OpenAI' },
   { id: 'tts-1', name: 'TTS-1', provider: 'OpenAI' },
   { id: 'tts-1-hd', name: 'TTS-1 HD', provider: 'OpenAI' },
@@ -27,7 +29,7 @@ const AUDIO_MODELS = [
 const AIMedia: React.FC = () => {
   const [activeMode, setActiveMode] = useState<MediaType>('image');
   const [prompt, setPrompt] = useState('');
-  const [selectedModel, setSelectedModel] = useState(IMAGE_MODELS[0].id);
+  const [selectedModel, setSelectedModel] = useState(IMAGE_MODELS[0].id); // Default to first image model
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<{ type: MediaType, url: string } | null>(null);
 
@@ -37,9 +39,9 @@ const AIMedia: React.FC = () => {
     setPrompt('');
     
     // Set default model for the new mode
-    if (mode === 'image') setSelectedModel(IMAGE_MODELS[0].id);
+    if (mode === 'image') setSelectedModel(IMAGE_MODELS[0].id); // gemini-3-pro-image-preview
     else if (mode === 'video') setSelectedModel(VIDEO_MODELS[0].id);
-    else if (mode === 'audio') setSelectedModel(AUDIO_MODELS[0].id);
+    else if (mode === 'audio') setSelectedModel(AUDIO_MODELS[0].id); // gpt-4o-audio-preview
   };
 
   const getModelList = () => {
